@@ -1,0 +1,67 @@
+# Python / Bytecode / Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+secrets.json
+config.local.json
+*.pem
+*.key
+
+# Datasets and Large Binary Files
+dataset/*
+!dataset/**/.gitkeep
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.parquet
+
+# Model Checkpoints & Weights
+models/*
+!models/**/.gitkeep
+*.pth
+*.pt
+*.onnx
+*.h5
+*.bin
+*.ckpt
+*.safetensors
+*.tflite
+*.engine
+
+# Output artifacts & logs
+outputs/*
+!outputs/**/.gitkeep
+*.log
+
+# Node dependencies & Frontend builds
+node_modules/
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+.vite/
+
+# IDEs & OS generated files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
