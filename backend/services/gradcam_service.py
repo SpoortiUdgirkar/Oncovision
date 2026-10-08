@@ -26,14 +26,19 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.gradcam.explain import GradCAM, MEDICAL_DISCLAIMER_TEXT
 
 
-def generate_gradcam_base64(model, orig_pil: Image.Image, img_tensor, alpha=0.4):
+def generate_gradcam_base64(model, orig_pil: Image.Image, img_tensor, target_class=None, alpha=0.4):
     """
-    Computes Grad-CAM overlay and encodes side-by-side visualization into Base64 PNG string.
+    Computes Grad-CAM overlay targeting target_class (e.g. from TTA prediction)
+    and encodes side-by-side visualization into Base64 PNG string.
+
+    Grad-CAM operates on the original un-flipped image forward pass using the target class index
+    selected by TTA probability averaging.
 
     Args:
-        model (nn.Module): Trained ResNet50 model.
+        model (nn.Module): Trained model instance.
         orig_pil (PIL.Image): Original uploaded image.
-        img_tensor (torch.Tensor): Preprocessed input tensor [1, 3, 224, 224].
+        img_tensor (torch.Tensor): Preprocessed input tensor [1, 3, H, W].
+        target_class (int, optional): Target class index to generate activation map for.
         alpha (float): Heatmap opacity weight.
 
     Returns:
@@ -44,7 +49,7 @@ def generate_gradcam_base64(model, orig_pil: Image.Image, img_tensor, alpha=0.4)
 
     # Compute Grad-CAM Map
     gradcam_engine = GradCAM(model)
-    cam_map_2d, pred_idx, confidence, probs = gradcam_engine.generate_map(img_tensor)
+    cam_map_2d, pred_idx, confidence, probs = gradcam_engine.generate_map(img_tensor, target_class=target_class)
 
     # Resize Grad-CAM Map to Original Image Dimensions
     cam_resized = cv2.resize(cam_map_2d, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)

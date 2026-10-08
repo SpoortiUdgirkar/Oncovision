@@ -148,7 +148,8 @@ def create_dataloaders(
     batch_size=BATCH_SIZE,
     num_workers=NUM_WORKERS,
     train_transform=None,
-    val_test_transform=None
+    val_test_transform=None,
+    use_weighted_sampler=False
 ):
     """
     Factory function to build train, validation, and test PyTorch DataLoaders.
@@ -161,6 +162,7 @@ def create_dataloaders(
         num_workers (int): Multi-process data loading worker count.
         train_transform (callable): Transforms for training. Defaults to get_train_transforms().
         val_test_transform (callable): Transforms for val/test. Defaults to get_val_test_transforms().
+        use_weighted_sampler (bool): Whether to apply WeightedRandomSampler to the training DataLoader.
 
     Returns:
         tuple: (train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset)
@@ -174,13 +176,33 @@ def create_dataloaders(
     val_dataset = BreastUltrasoundDataset(val_dir, transform=val_test_transform)
     test_dataset = BreastUltrasoundDataset(test_dir, transform=val_test_transform)
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=torch.cuda.is_available()
-    )
+    if use_weighted_sampler:
+        from torch.utils.data import WeightedRandomSampler
+        counts = train_dataset.get_class_counts()
+        total_samples = len(train_dataset)
+        class_weights = {cls_name: total_samples / count if count > 0 else 1.0 for cls_name, count in counts.items()}
+        sample_weights = [class_weights[train_dataset.class_names[label]] for _, label in train_dataset.samples]
+        sampler = WeightedRandomSampler(
+            weights=torch.tensor(sample_weights, dtype=torch.double),
+            num_samples=len(sample_weights),
+            replacement=True
+        )
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            sampler=sampler,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available()
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available()
+        )
 
     val_loader = DataLoader(
         val_dataset,

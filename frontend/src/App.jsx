@@ -7,7 +7,8 @@ import {
   AlertCircle, 
   CheckCircle, 
   Info, 
-  Eye 
+  Eye,
+  Cpu
 } from 'lucide-react';
 
 const API_BASE_URL = "http://localhost:8000";
@@ -182,7 +183,7 @@ export default function App() {
             <div className="spinner"></div>
             <h3>Analyzing Ultrasound Image...</h3>
             <p style={{ color: 'var(--text-secondary)', marginTop: '6px' }}>
-              Executing ResNet50 inference & calculating Grad-CAM attention heatmap
+              Executing EfficientNet-B0 inference & calculating Grad-CAM attention heatmap
             </p>
           </div>
         )}
@@ -190,6 +191,23 @@ export default function App() {
         {/* State 4: Prediction & Grad-CAM Results */}
         {result && !isLoading && (
           <div>
+            {/* Model Metadata Tag */}
+            <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+              <span style={{ 
+                display: 'inline-flex', 
+                alignItems: 'center', 
+                gap: '6px', 
+                background: '#e0f2fe', 
+                color: '#0369a1', 
+                padding: '4px 12px', 
+                borderRadius: '12px', 
+                fontSize: '0.85rem',
+                fontWeight: '600'
+              }}>
+                <Cpu size={14} /> Primary Model: {result.model_name || "EfficientNet-B0"}
+              </span>
+            </div>
+
             {/* Header: Class & Confidence */}
             <div className="results-header">
               <div className="prediction-badge-wrapper">
@@ -204,11 +222,34 @@ export default function App() {
               </div>
             </div>
 
+            {/* Class Probabilities Breakdown */}
+            {result.probabilities && (
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(3, 1fr)', 
+                gap: '12px', 
+                margin: '1.2rem 0',
+                background: '#f8fafc',
+                padding: '12px',
+                borderRadius: '8px',
+                border: '1px solid #e2e8f0'
+              }}>
+                {Object.entries(result.probabilities).map(([cls, prob]) => (
+                  <div key={cls} style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '500' }}>{cls}</div>
+                    <div style={{ fontSize: '1rem', fontWeight: '700', color: cls === result.prediction ? '#0284c7' : '#334155' }}>
+                      {(prob * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Explainability Banner */}
             <div className="explain-box">
               <Info size={18} style={{ float: 'left', marginRight: '10px', marginTop: '2px' }} />
               <strong>Grad-CAM Explainability:</strong> The heatmap highlights the spatial acoustic regions 
-              within the ultrasound scan that contributed most significantly to the deep learning model's prediction.
+              within the ultrasound scan that contributed most significantly to EfficientNet-B0's prediction.
             </div>
 
             {/* Image Comparison Grid */}

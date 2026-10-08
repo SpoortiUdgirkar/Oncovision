@@ -1,0 +1,13 @@
+Model,Test Accuracy (%),Macro Precision (%),Macro Recall (%),Macro F1-Score (%),Weighted F1-Score (%)
+ResNet50,44.17,41.19,42.69,34.92,40.95
+EfficientNet-B0,72.5,70.7,68.88,69.47,72.43
+DenseNet121,40.0,33.05,33.69,32.01,39.5
+EfficientNet-B0 (Exp1 256x256),75.83,74.96,70.33,71.9,75.16
+EfficientNet-B0 (Exp2 256x256 + Val Macro F1),62.5,60.83,56.37,57.61,61.92
+EfficientNet-B0 (Exp3 256x256 + Label Smooth 0.1),64.17,62.05,66.63,62.39,65.12
+EfficientNet-B0 (Exp4 256x256 + Weighted Sampler),26.67,45.19,39.89,26.97,22.73
+EfficientNet-B0 (Exp5 320x320),70.83,67.42,68.97,68.09,70.9
+EfficientNet-B0 (Exp6 Focal Loss),70.83,79.63,56.44,59.85,67.39
+EfficientNet-B0 (Exp7 Cosine Scheduler),64.17,60.01,57.91,58.74,63.46
+EfficientNet-B0 (Exp8 Random Erasing),67.5,64.6,64.26,64.0,67.3
+EfficientNet-B0 (Exp9 Exp1 + H-Flip TTA),75.83,74.48,71.96,73.00,75.44

@@ -43,18 +43,40 @@ class GradCAM:
         self.model.eval()
         self.target_layer = target_layer
 
-        # Automatically locate final convolutional layer for ResNet50 if not specified
+        # Automatically locate final convolutional layer for target architecture if not specified
         if self.target_layer is None:
-            if hasattr(self.model, "layer4"):
-                self.target_layer = self.model.layer4[-1]
-            else:
-                raise ValueError("Target layer could not be automatically identified for model architecture.")
+            self.target_layer = self._detect_target_layer()
+
+        print(f"[INFO] Grad-CAM target layer selected: {self.target_layer}")
 
         self.activations = None
         self.gradients = None
 
         # Register PyTorch forward and backward hooks
         self._register_hooks()
+
+    def _detect_target_layer(self):
+        """
+        Identifies the final spatial convolutional feature layer appropriate for Grad-CAM.
+
+        Targets:
+        - EfficientNet-B0: model.features[-1][0] (final Conv2d inside final Conv2dNormActivation stage)
+        - ResNet50: model.layer4[-1] (final Bottleneck block)
+        - DenseNet121: model.features.denseblock4 (final Dense block)
+        """
+        if hasattr(self.model, "features"):
+            if hasattr(self.model.features, "denseblock4"):
+                return self.model.features.denseblock4
+            else:
+                last_stage = self.model.features[-1]
+                # If last stage is a sequential/container containing a Conv2d layer (e.g. Conv2dNormActivation)
+                if hasattr(last_stage, "__getitem__") and len(last_stage) > 0 and isinstance(last_stage[0], nn.Conv2d):
+                    return last_stage[0]
+                return last_stage
+        elif hasattr(self.model, "layer4"):
+            return self.model.layer4[-1]
+
+        raise ValueError("Target layer could not be automatically identified for model architecture.")
 
     def _register_hooks(self):
         def forward_hook(module, input, output):

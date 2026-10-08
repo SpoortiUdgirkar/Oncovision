@@ -33,7 +33,7 @@ IDX_TO_CLASS = {idx: name for idx, name in enumerate(CLASS_NAMES)}
 VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 
 # Image Preprocessing Configuration
-IMAGE_SIZE = (224, 224)  # Target dimensions (Height, Width) for standard CNN architectures
+IMAGE_SIZE = (256, 256)  # Target dimensions (Height, Width) for Experiment 9 model (256x256)
 NORMALIZE_MEAN = [0.485, 0.456, 0.406]  # ImageNet RGB mean values
 NORMALIZE_STD = [0.229, 0.224, 0.225]   # ImageNet RGB standard deviation values
 

@@ -15,13 +15,18 @@ from src.config import IMAGE_SIZE, NORMALIZE_MEAN, NORMALIZE_STD
 def get_train_transforms(
     image_size=IMAGE_SIZE,
     mean=NORMALIZE_MEAN,
-    std=NORMALIZE_STD
+    std=NORMALIZE_STD,
+    use_random_erasing=False,
+    erasing_p=0.15,
+    erasing_scale=(0.02, 0.08),
+    erasing_ratio=(0.5, 2.0),
+    erasing_value=0
 ):
     """
     Returns PyTorch torchvision transforms for the training dataset.
 
     Augmentations applied:
-    - Resize: Standardizes all ultrasound scans to (224, 224).
+    - Resize: Standardizes all ultrasound scans to target size (e.g., 256x256).
     - Random Horizontal Flip: Safe for ultrasound scans as lateral orientation 
       does not change acoustic shadows or margin boundaries.
     - Random Rotation (+/- 15 degrees): Simulates realistic transducer positioning angles.
@@ -29,19 +34,31 @@ def get_train_transforms(
       gain/contrast settings variation.
     - ToTensor: Scales pixel values from [0, 255] to [0.0, 1.0].
     - Normalize: Normalizes image channels using ImageNet pretrained stats.
+    - Optional RandomErasing: Mildly erases small rectangular regions (p=0.15, scale=(0.02, 0.08))
+      to improve model robustness against speckle artifacts and localized occlusions.
 
     Unrealistic transformations excluded:
     - Vertical flip: Violates anatomical acoustic depth (skin line vs chest wall).
     - Extreme distortion/warping: Alters tumor boundary geometry and calcifications.
     """
-    return transforms.Compose([
+    transform_list = [
         transforms.Resize(image_size, interpolation=transforms.InterpolationMode.BILINEAR),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomRotation(degrees=15),
         transforms.ColorJitter(brightness=0.1, contrast=0.1),
         transforms.ToTensor(),
         transforms.Normalize(mean=mean, std=std)
-    ])
+    ]
+    if use_random_erasing:
+        transform_list.append(
+            transforms.RandomErasing(
+                p=erasing_p,
+                scale=erasing_scale,
+                ratio=erasing_ratio,
+                value=erasing_value
+            )
+        )
+    return transforms.Compose(transform_list)
 
 
 def get_val_test_transforms(
