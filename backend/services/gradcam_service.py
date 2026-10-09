@@ -64,31 +64,34 @@ def generate_gradcam_base64(model, orig_pil: Image.Image, img_tensor, target_cla
 
     # Plot Side-by-Side Figure
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-    fig.suptitle(
-        "OncoVision AI Model Explainability Map",
-        fontsize=13,
-        fontweight="bold",
-        color="darkblue"
-    )
-
-    axes[0].imshow(orig_np)
-    axes[0].set_title("Original Ultrasound Scan", fontsize=10)
-    axes[0].axis("off")
-
-    axes[1].imshow(overlay_rgb)
-    axes[1].set_title(f"Grad-CAM Attention Overlay", fontsize=10)
-    axes[1].axis("off")
-
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-
-    # Save to Bytes Buffer
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=130)
-    plt.close(fig)
-    buf.seek(0)
+    try:
+        fig.suptitle(
+            "OncoVision AI Model Explainability Map",
+            fontsize=13,
+            fontweight="bold",
+            color="darkblue"
+        )
 
-    # Encode to Base64 String
-    base64_encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
-    base64_data_uri = f"data:image/png;base64,{base64_encoded}"
+        axes[0].imshow(orig_np)
+        axes[0].set_title("Original Ultrasound Scan", fontsize=10)
+        axes[0].axis("off")
 
-    return base64_data_uri, pred_idx, confidence, probs
+        axes[1].imshow(overlay_rgb)
+        axes[1].set_title(f"Grad-CAM Attention Overlay", fontsize=10)
+        axes[1].axis("off")
+
+        plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+        # Save to Bytes Buffer
+        plt.savefig(buf, format="png", dpi=130)
+        buf.seek(0)
+
+        # Encode to Base64 String
+        base64_encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+        base64_data_uri = f"data:image/png;base64,{base64_encoded}"
+
+        return base64_data_uri, pred_idx, confidence, probs
+    finally:
+        plt.close(fig)
+        buf.close()

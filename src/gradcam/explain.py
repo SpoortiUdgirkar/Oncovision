@@ -85,64 +85,84 @@ class GradCAM:
         def backward_hook(module, grad_input, grad_output):
             self.gradients = grad_output[0].detach()
 
-        self.target_layer.register_forward_hook(forward_hook)
-        self.target_layer.register_full_backward_hook(backward_hook)
+        self.forward_handle = self.target_layer.register_forward_hook(forward_hook)
+        self.backward_handle = self.target_layer.register_full_backward_hook(backward_hook)
+
+    def remove_hooks(self):
+        """Removes registered PyTorch forward and backward hooks cleanly."""
+        if hasattr(self, "forward_handle") and self.forward_handle is not None:
+            self.forward_handle.remove()
+            self.forward_handle = None
+        if hasattr(self, "backward_handle") and self.backward_handle is not None:
+            self.backward_handle.remove()
+            self.backward_handle = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.remove_hooks()
 
     def generate_map(self, input_tensor, target_class=None):
         """
         Computes normalized 2D Grad-CAM activation map for target class.
 
         Args:
-            input_tensor (torch.Tensor): Preprocessed input image tensor [1, 3, 224, 224].
+            input_tensor (torch.Tensor): Preprocessed input image tensor [1, 3, H, W].
             target_class (int, optional): Class index to explain. Defaults to predicted class.
 
         Returns:
             tuple: (cam_map_2d, pred_class_idx, confidence, probabilities_list)
         """
-        input_tensor = input_tensor.to(NEXT_DEVICE(self.model))
-        input_tensor.requires_grad = True
+        try:
+            input_tensor = input_tensor.to(NEXT_DEVICE(self.model))
+            input_tensor.requires_grad = True
 
-        # Forward pass
-        logits = self.model(input_tensor)
-        probs = torch.softmax(logits, dim=1).squeeze(0)
+            # Forward pass
+            logits = self.model(input_tensor)
+            probs = torch.softmax(logits, dim=1).squeeze(0)
 
-        pred_class_idx = torch.argmax(probs).item()
-        confidence = probs[pred_class_idx].item()
+            pred_class_idx = torch.argmax(probs).item()
+            confidence = probs[pred_class_idx].item()
 
-        if target_class is None:
-            target_class = pred_class_idx
+            if target_class is None:
+                target_class = pred_class_idx
 
-        # Zero existing gradients
-        self.model.zero_grad()
+            # Zero existing gradients
+            self.model.zero_grad(set_to_none=True)
 
-        # Backward pass for target class score
-        score = logits[0, target_class]
-        score.backward()
+            # Backward pass for target class score
+            score = logits[0, target_class]
+            score.backward()
 
-        # Fetch captured activations and gradients
-        # Activations: [1, C, H, W], Gradients: [1, C, H, W]
-        activations = self.activations[0]  # [C, H, W]
-        gradients = self.gradients[0]      # [C, H, W]
+            # Fetch captured activations and gradients
+            activations = self.activations[0]  # [C, H, W]
+            gradients = self.gradients[0]      # [C, H, W]
 
-        # Global Average Pooling of gradients across spatial dimensions
-        weights = torch.mean(gradients, dim=(1, 2))  # [C]
+            # Global Average Pooling of gradients across spatial dimensions
+            weights = torch.mean(gradients, dim=(1, 2))  # [C]
 
-        # Compute weighted sum of activation maps
-        cam = torch.zeros(activations.shape[1:], dtype=torch.float32, device=activations.device)
-        for i, w in enumerate(weights):
-            cam += w * activations[i]
+            # Compute weighted sum of activation maps
+            cam = torch.zeros(activations.shape[1:], dtype=torch.float32, device=activations.device)
+            for i, w in enumerate(weights):
+                cam += w * activations[i]
 
-        # Apply ReLU activation to keep features with positive influence
-        cam = torch.clamp(cam, min=0)
+            # Apply ReLU activation to keep features with positive influence
+            cam = torch.clamp(cam, min=0)
 
-        # Normalize activation map to [0.0, 1.0]
-        cam_np = cam.cpu().numpy()
-        if cam_np.max() > 0:
-            cam_np = (cam_np - cam_np.min()) / (cam_np.max() - cam_np.min() + 1e-8)
-        else:
-            cam_np = np.zeros_like(cam_np)
+            # Normalize activation map to [0.0, 1.0]
+            cam_np = cam.cpu().numpy()
+            if cam_np.max() > 0:
+                cam_np = (cam_np - cam_np.min()) / (cam_np.max() - cam_np.min() + 1e-8)
+            else:
+                cam_np = np.zeros_like(cam_np)
 
-        return cam_np, pred_class_idx, confidence, probs.cpu().tolist()
+            return cam_np, pred_class_idx, confidence, probs.cpu().tolist()
+        finally:
+            self.remove_hooks()
+            self.activations = None
+            self.gradients = None
+            self.model.zero_grad(set_to_none=True)
 
 
 def NEXT_DEVICE(model):
