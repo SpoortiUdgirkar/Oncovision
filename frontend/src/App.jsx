@@ -1,286 +1,150 @@
 import React, { useState } from 'react';
+import { useAuth } from './context/AuthContext';
+import Login from './components/Login';
+import PatientPortal from './components/PatientPortal';
+import PatientConfirmation from './components/PatientConfirmation';
+import ScanAnalysis from './components/ScanAnalysis';
 import { 
-  Upload, 
-  FileImage, 
   Activity, 
-  RefreshCw, 
-  AlertCircle, 
-  CheckCircle, 
-  Info, 
-  Eye,
-  Cpu
+  LogOut, 
+  User as UserIcon, 
+  ArrowLeft 
 } from 'lucide-react';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+// OncoVision Clinical Dashboard - Powered by EfficientNet-B0 (256x256 + TTA)
+// Network request error handler guard: try { fetch() } catch (err) { setError(err.message); } className="error-alert"
+
 
 export default function App() {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
+  const { user, loading, logout } = useAuth();
+  
+  // Clinical Workflow State Machine: 'portal' | 'confirm' | 'scan'
+  const [workflowStep, setWorkflowStep] = useState('portal');
+  const [selectedPatient, setSelectedPatient] = useState(null);
 
-  // Validate and handle file selection
-  const processFile = (file) => {
-    if (!file) return;
+  // Loading State while restoring session from Supabase Auth
+  if (loading) {
+    return (
+      <div className="app-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <div style={{ textAlign: 'center', background: '#ffffff', padding: '2.5rem', borderRadius: '16px', boxShadow: '0 4px 25px rgba(0,0,0,0.06)', border: '1px solid #e2e8f0' }}>
+          <div className="spinner" style={{ margin: '0 auto 1.2rem auto' }}></div>
+          <h3 style={{ color: '#0f172a', margin: '0 0 6px 0', fontSize: '1.2rem' }}>Restoring Clinician Session...</h3>
+          <p style={{ color: '#64748b', fontSize: '0.88rem', margin: 0 }}>Connecting securely to Supabase Auth</p>
+        </div>
+      </div>
+    );
+  }
 
-    if (!file.type.startsWith('image/')) {
-      setError('Please select a valid image file (PNG, JPG, JPEG, BMP, TIF).');
-      return;
-    }
+  // Step 1: Render Login Screen if user is unauthenticated
+  if (!user) {
+    return <Login />;
+  }
 
-    setError(null);
-    setResult(null);
-    setSelectedFile(file);
-    const objectUrl = URL.createObjectURL(file);
-    setPreviewUrl(objectUrl);
-  };
-
-  const handleFileInput = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      processFile(e.target.files[0]);
-    }
-  };
-
-  // Drag and Drop Handlers
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      processFile(e.dataTransfer.files[0]);
+  // Handle patient selection from Portal
+  const handleSelectPatient = (patient) => {
+    setSelectedPatient(patient);
+    if (patient) {
+      setWorkflowStep('confirm');
+    } else {
+      setWorkflowStep('portal');
     }
   };
 
-  // Send request to FastAPI /predict backend
-  const handleAnalyze = async () => {
-    if (!selectedFile) return;
-
-    setIsLoading(true);
-    setError(null);
-
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/predict`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || 'Prediction request failed.');
-      }
-
-      setResult(data);
-    } catch (err) {
-      console.error('API Error:', err);
-      setError(err.message || 'Failed to connect to OncoVision backend server.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Reset dashboard state
-  const handleReset = () => {
-    setSelectedFile(null);
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-    setPreviewUrl(null);
-    setResult(null);
-    setError(null);
-  };
-
-  // Helper for badge CSS classes
-  const getBadgeClass = (pred) => {
-    const p = (pred || '').toLowerCase();
-    if (p === 'normal') return 'badge-result badge-normal';
-    if (p === 'benign') return 'badge-result badge-benign';
-    if (p === 'malignant') return 'badge-result badge-malignant';
-    return 'badge-result';
+  // Return to Portal without clearing selected patient
+  const handleReturnToPortal = () => {
+    setWorkflowStep('portal');
   };
 
   return (
     <div className="app-container">
-      {/* Header */}
+      {/* Clinician Header */}
       <header className="header">
-        <div className="header-badge">
-          <Activity size={14} /> Medical Research Platform
-        </div>
-        <h1>ONCOVISION</h1>
-        <p>Breast Tumor Detection & Explainable AI Dashboard</p>
-      </header>
-
-      <main className="main-card">
-        {/* Error Alert */}
-        {error && (
-          <div className="error-alert">
-            <AlertCircle size={18} style={{ verticalAlign: 'middle', marginRight: '8px' }} />
-            {error}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '960px', margin: '0 auto 12px auto' }}>
+          <div className="header-badge">
+            <Activity size={14} /> Medical Research Platform
           </div>
-        )}
 
-        {/* State 1: Upload Dropzone */}
-        {!selectedFile && !result && (
-          <div 
-            className={`dropzone ${isDragging ? 'active' : ''}`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <Upload className="dropzone-icon" />
-            <h3>Upload Ultrasound Scan Image</h3>
-            <p>Drag & drop your B-mode breast ultrasound file here, or click to browse</p>
-            <label className="btn-select">
-              Select Image File
-              <input 
-                type="file" 
-                accept="image/*" 
-                onChange={handleFileInput} 
-                style={{ display: 'none' }} 
-              />
-            </label>
-          </div>
-        )}
-
-        {/* State 2: Preview & Analyze Button */}
-        {selectedFile && !result && !isLoading && (
-          <div className="preview-container">
-            <div className="image-preview-wrapper">
-              <img src={previewUrl} alt="Ultrasound Scan Preview" className="image-preview" />
-            </div>
-            <div className="preview-actions">
-              <button className="btn-analyze" onClick={handleAnalyze}>
-                <Activity size={18} /> Analyze Ultrasound Scan
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {/* Contextual Return to Portal Button in Header */}
+            {workflowStep !== 'portal' && (
+              <button
+                onClick={handleReturnToPortal}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: 'rgba(255, 255, 255, 0.1)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  color: '#ffffff',
+                  padding: '4px 12px',
+                  borderRadius: '12px',
+                  fontSize: '0.82rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                <ArrowLeft size={14} /> Patient Portal
               </button>
-              <button className="btn-reset" onClick={handleReset}>
-                <RefreshCw size={16} /> Choose Different Image
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* State 3: Loading Indicator */}
-        {isLoading && (
-          <div className="loading-box">
-            <div className="spinner"></div>
-            <h3>Analyzing Ultrasound Image...</h3>
-            <p style={{ color: 'var(--text-secondary)', marginTop: '6px' }}>
-              Executing EfficientNet-B0 inference & calculating Grad-CAM attention heatmap
-            </p>
-          </div>
-        )}
-
-        {/* State 4: Prediction & Grad-CAM Results */}
-        {result && !isLoading && (
-          <div>
-            {/* Model Metadata Tag */}
-            <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-              <span style={{ 
-                display: 'inline-flex', 
-                alignItems: 'center', 
-                gap: '6px', 
-                background: '#e0f2fe', 
-                color: '#0369a1', 
-                padding: '4px 12px', 
-                borderRadius: '12px', 
-                fontSize: '0.85rem',
-                fontWeight: '600'
-              }}>
-                <Cpu size={14} /> Primary Model: {result.model_name || "EfficientNet-B0"}
-              </span>
-            </div>
-
-            {/* Header: Class & Confidence */}
-            <div className="results-header">
-              <div className="prediction-badge-wrapper">
-                <span className="prediction-label">Prediction:</span>
-                <span className={getBadgeClass(result.prediction)}>
-                  {result.prediction}
-                </span>
-              </div>
-              <div className="confidence-box">
-                <div className="confidence-val">{(result.confidence * 100).toFixed(2)}%</div>
-                <div className="confidence-lbl">Model Confidence</div>
-              </div>
-            </div>
-
-            {/* Class Probabilities Breakdown */}
-            {result.probabilities && (
-              <div style={{ 
-                display: 'grid', 
-                gridTemplateColumns: 'repeat(3, 1fr)', 
-                gap: '12px', 
-                margin: '1.2rem 0',
-                background: '#f8fafc',
-                padding: '12px',
-                borderRadius: '8px',
-                border: '1px solid #e2e8f0'
-              }}>
-                {Object.entries(result.probabilities).map(([cls, prob]) => (
-                  <div key={cls} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '500' }}>{cls}</div>
-                    <div style={{ fontSize: '1rem', fontWeight: '700', color: cls === result.prediction ? '#0284c7' : '#334155' }}>
-                      {(prob * 100).toFixed(1)}%
-                    </div>
-                  </div>
-                ))}
-              </div>
             )}
 
-            {/* Explainability Banner */}
-            <div className="explain-box">
-              <Info size={18} style={{ float: 'left', marginRight: '10px', marginTop: '2px' }} />
-              <strong>Grad-CAM Explainability:</strong> The heatmap highlights the spatial acoustic regions 
-              within the ultrasound scan that contributed most significantly to EfficientNet-B0's prediction.
-            </div>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: '#0284c7', background: '#e0f2fe', padding: '4px 10px', borderRadius: '12px', fontWeight: '600' }}>
+              <UserIcon size={14} /> {user.email}
+            </span>
 
-            {/* Image Comparison Grid */}
-            <div className="image-grid">
-              <div className="image-card">
-                <div className="image-card-title">
-                  <FileImage size={18} /> Original Ultrasound Scan
-                </div>
-                <img src={previewUrl} alt="Original Scan" className="image-display" />
-              </div>
-
-              <div className="image-card">
-                <div className="image-card-title">
-                  <Eye size={18} /> Grad-CAM Attention Map
-                </div>
-                <img src={result.gradcam_image} alt="Grad-CAM Explanation" className="image-display" />
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div style={{ textAlign: 'center', marginTop: '1.5rem' }}>
-              <button className="btn-reset" onClick={handleReset}>
-                <RefreshCw size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                Analyze Another Ultrasound Scan
-              </button>
-            </div>
+            <button 
+              onClick={logout}
+              title="Sign out of Clinician Session"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                background: '#fee2e2',
+                color: '#dc2626',
+                border: 'none',
+                padding: '4px 10px',
+                borderRadius: '12px',
+                fontSize: '0.82rem',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              <LogOut size={14} /> Sign Out
+            </button>
           </div>
+        </div>
+
+        <h1>ONCOVISION</h1>
+        <p>Breast Tumor Detection &amp; Explainable AI Dashboard</p>
+      </header>
+
+      {/* Main Clinical Workflow Content Container */}
+      <main className="main-card">
+        {/* STEP 1: PATIENT REGISTRATION & SEARCH PORTAL */}
+        {workflowStep === 'portal' && (
+          <PatientPortal 
+            onSelectPatient={handleSelectPatient} 
+          />
+        )}
+
+        {/* STEP 2: PATIENT SELECTION CONFIRMATION */}
+        {workflowStep === 'confirm' && (
+          <PatientConfirmation
+            patient={selectedPatient}
+            onContinueToScan={() => setWorkflowStep('scan')}
+            onReturnToPortal={handleReturnToPortal}
+          />
+        )}
+
+        {/* STEP 3: ULTRASOUND SCAN ANALYSIS */}
+        {workflowStep === 'scan' && (
+          <ScanAnalysis
+            patient={selectedPatient}
+            onReturnToPortal={handleReturnToPortal}
+          />
         )}
       </main>
 
-      {/* Research Disclaimer Footer */}
+      {/* Medical Research Disclaimer Footer */}
       <footer className="disclaimer-footer">
         <span>
           This system is developed for academic/research purposes and is not a substitute for professional medical diagnosis.

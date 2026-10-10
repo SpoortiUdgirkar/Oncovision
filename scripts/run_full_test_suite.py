@@ -59,6 +59,9 @@ from src.gradcam.localization import compute_iou
 from src.training.loss import FocalLoss
 from backend.main import app
 from backend.services.model_service import ModelService
+from backend.auth import create_test_jwt
+
+TEST_AUTH_HEADERS = {"Authorization": f"Bearer {create_test_jwt()}"}
 
 
 def run_all_tests():
@@ -204,7 +207,7 @@ def run_all_tests():
             img_bytes = f.read()
 
         with TestClient(app) as client:
-            res = client.post("/predict", files={"file": (test_img_path.name, io.BytesIO(img_bytes), "image/png")})
+            res = client.post("/predict", files={"file": (test_img_path.name, io.BytesIO(img_bytes), "image/png")}, headers=TEST_AUTH_HEADERS)
             data = res.json()
             has_pred = data.get("prediction") in ["Normal", "Benign", "Malignant"]
             has_b64 = str(data.get("gradcam_image")).startswith("data:image/png;base64,")
@@ -260,7 +263,7 @@ def run_all_tests():
     # ----------------------------------------------------
     try:
         with TestClient(app) as client:
-            res = client.post("/predict", files={"file": ("corrupted.png", io.BytesIO(b"Not an image byte stream"), "image/png")})
+            res = client.post("/predict", files={"file": ("corrupted.png", io.BytesIO(b"Not an image byte stream"), "image/png")}, headers=TEST_AUTH_HEADERS)
             passed = (res.status_code == 400) and ("corrupted" in res.json().get("detail", "").lower() or "invalid" in res.json().get("detail", "").lower())
             record_test(
                 10, "Invalid Image Upload Handling",
@@ -277,7 +280,7 @@ def run_all_tests():
     try:
         large_dummy_bytes = b"0" * (16 * 1024 * 1024)  # 16 MB dummy payload
         with TestClient(app) as client:
-            res = client.post("/predict", files={"file": ("huge_scan.png", io.BytesIO(large_dummy_bytes), "image/png")})
+            res = client.post("/predict", files={"file": ("huge_scan.png", io.BytesIO(large_dummy_bytes), "image/png")}, headers=TEST_AUTH_HEADERS)
             passed = (res.status_code == 400) and ("exceeds" in res.json().get("detail", "").lower() or "limit" in res.json().get("detail", "").lower())
             record_test(
                 11, "Very Large Image File Handling",
@@ -293,7 +296,7 @@ def run_all_tests():
     # ----------------------------------------------------
     try:
         with TestClient(app) as client:
-            res = client.post("/predict", files={"file": ("document.pdf", io.BytesIO(b"%PDF-1.4 dummy pdf content"), "application/pdf")})
+            res = client.post("/predict", files={"file": ("document.pdf", io.BytesIO(b"%PDF-1.4 dummy pdf content"), "application/pdf")}, headers=TEST_AUTH_HEADERS)
             passed = (res.status_code == 400) and ("unsupported" in res.json().get("detail", "").lower() or "extension" in res.json().get("detail", "").lower())
             record_test(
                 12, "Unsupported File Format Handling",
@@ -354,7 +357,7 @@ def run_all_tests():
         consecutive_passes = 0
         with TestClient(app) as client:
             for i in range(5):
-                res = client.post("/predict", files={"file": (f"test_{i}.png", io.BytesIO(img_bytes), "image/png")})
+                res = client.post("/predict", files={"file": (f"test_{i}.png", io.BytesIO(img_bytes), "image/png")}, headers=TEST_AUTH_HEADERS)
                 if res.status_code == 200 and "prediction" in res.json():
                     consecutive_passes += 1
 
@@ -528,6 +531,123 @@ def run_all_tests():
         )
     except Exception as e:
         record_test(23, "TTA Verification", "TTA verification succeeds", f"Error: {str(e)}", False)
+
+    # ----------------------------------------------------
+    # Test 24: Supabase Config Validation & Secret Key Masking
+    # ----------------------------------------------------
+    try:
+        from backend.services.supabase_service import SupabaseService
+        from unittest.mock import patch
+        
+        sec_key = "sb_secret_service_role_key_998877"
+        with patch.dict(os.environ, {"SUPABASE_URL": "https://test-proj.supabase.co", "SUPABASE_SECRET_KEY": sec_key}):
+            svc = SupabaseService()
+            is_conf = svc.is_configured()
+            masked = svc.get_masked_secret_key()
+            no_leak = (sec_key not in (masked or "")) and ("8877" in (masked or ""))
+        
+        code_gen = SupabaseService.generate_patient_code()
+        valid_code = code_gen.startswith("OV-P-") and len(code_gen) == 11
+
+        passed = is_conf and no_leak and valid_code
+        record_test(
+            24, "Supabase Config & Patient Code Generator",
+            "Configuration validation, zero secret key exposure, and OV-P-XXXXXX patient code generation",
+            f"Configured: {is_conf}, Masked: {masked}, Patient Code: {code_gen}",
+            passed
+        )
+    except Exception as e:
+        record_test(24, "Supabase Config & Patient Code Generator", "Supabase service validation succeeds", f"Error: {str(e)}", False)
+
+    # ----------------------------------------------------
+    # Test 25: Mocked Patient Registration & Retrieval Routes
+    # ----------------------------------------------------
+    try:
+        from unittest.mock import patch, MagicMock
+        with patch("backend.services.supabase_service.supabase_service.get_client") as mock_get_client, \
+             patch("backend.services.supabase_service.supabase_service.is_configured", return_value=True):
+            
+            mock_client = MagicMock()
+            mock_table = MagicMock()
+            mock_insert = MagicMock()
+            mock_select = MagicMock()
+            
+            call_count = 0
+            def mock_eq_impl(field, val):
+                nonlocal call_count
+                call_count += 1
+                mock_ex = MagicMock()
+                if call_count == 1:
+                    # Select check during registration -> no collision
+                    mock_ex.execute.return_value.data = []
+                else:
+                    # Retrieval check -> return patient
+                    mock_ex.execute.return_value.data = [{
+                        "id": "123e4567-e89b-12d3-a456-426614174000",
+                        "patient_code": "OV-P-TEST01",
+                        "full_name": "Test Patient",
+                        "age": 50,
+                        "notes": "Test notes"
+                    }]
+                return mock_ex
+
+            mock_select.eq.side_effect = mock_eq_impl
+
+            mock_insert.execute.return_value.data = [{
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "patient_code": "OV-P-TEST01",
+                "full_name": "Test Patient",
+                "age": 50,
+                "gender": "Female",
+                "notes": "Test notes"
+            }]
+
+            mock_client.table.return_value = mock_table
+            mock_table.insert.return_value = mock_insert
+            mock_table.select.return_value = mock_select
+            mock_get_client.return_value = mock_client
+
+            with TestClient(app) as client:
+                res_post = client.post("/patients", json={"full_name": "Test Patient", "age": 50, "gender": "Female", "notes": "Test notes"}, headers=TEST_AUTH_HEADERS)
+                post_ok = (res_post.status_code == 201) and (res_post.json()["patient"]["patient_code"] == "OV-P-TEST01")
+
+                res_get = client.get("/patients/OV-P-TEST01", headers=TEST_AUTH_HEADERS)
+                get_ok = (res_get.status_code == 200) and (res_get.json()["patient"]["full_name"] == "Test Patient")
+
+        passed = post_ok and get_ok
+        record_test(
+            25, "Mocked Patient Registration & Retrieval Routes",
+            "POST /patients returns 201 Created and GET /patients/{id} returns 200 OK using mocked Supabase client",
+            f"POST /patients 201: {post_ok}, GET /patients 200: {get_ok}",
+            passed
+        )
+    except Exception as e:
+        record_test(25, "Mocked Patient Registration & Retrieval Routes", "Patient routes test succeeds", f"Error: {str(e)}", False)
+
+    # Test 26: Downloadable PDF Diagnostic Report Generation
+    try:
+        from backend.services.pdf_service import generate_scan_report_pdf
+        test_pt = {"id": "patient-uuid-26", "patient_code": "OV-P-TEST26", "full_name": "Demo Patient", "age": 42, "gender": "Female", "created_at": "2026-10-10T10:00:00Z"}
+        test_sc = {"id": "scan-26-uuid", "patient_id": "patient-uuid-26", "predicted_class": "Benign", "normal_probability": 0.1, "benign_probability": 0.8, "malignant_probability": 0.1, "model_version": "EfficientNet-B0 (256x256 + TTA)", "created_at": "2026-10-10T12:00:00Z"}
+        pdf_bytes = generate_scan_report_pdf(test_pt, test_sc)
+        pdf_ok = isinstance(pdf_bytes, bytes) and pdf_bytes.startswith(b"%PDF") and len(pdf_bytes) > 1000
+
+        with patch("backend.routes.scans.supabase_service.is_configured", return_value=True), \
+             patch("backend.routes.scans.supabase_service.get_scan_by_id", return_value=test_sc), \
+             patch("backend.routes.scans.supabase_service.get_patient_by_id", return_value=test_pt), \
+             patch("backend.routes.scans.supabase_service.download_storage_file", return_value=None):
+            with TestClient(app) as client:
+                res_pdf = client.get("/scans/scan-26-uuid/report.pdf", headers=TEST_AUTH_HEADERS)
+                route_ok = (res_pdf.status_code == 200) and (res_pdf.headers.get("content-type") == "application/pdf") and ("attachment" in res_pdf.headers.get("content-disposition", ""))
+
+        record_test(
+            26, "Downloadable PDF Diagnostic Report Generation",
+            "generate_scan_report_pdf creates valid %PDF stream and GET /scans/{id}/report.pdf returns downloadable PDF",
+            f"PDF Bytes Valid: {pdf_ok}, HTTP 200 Downloadable PDF: {route_ok}",
+            pdf_ok and route_ok
+        )
+    except Exception as e:
+        record_test(26, "Downloadable PDF Diagnostic Report Generation", "PDF report generation succeeds", f"Error: {str(e)}", False)
 
     # Summary
     passed_count = sum(1 for t in test_results if t["passed"])

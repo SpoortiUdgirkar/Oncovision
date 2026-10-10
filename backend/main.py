@@ -15,10 +15,16 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 import torch
 
+from dotenv import load_dotenv
+
 # Ensure project root directory is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Load environment variables from root and frontend .env files if present
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / "frontend" / ".env")
 
 # Configure PyTorch CPU thread pool once at startup before parallel work begins.
 # On resource-constrained environments (e.g. Render free tier with 0.1 CPU allocation),
@@ -35,6 +41,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.services.model_service import model_service
 from backend.routes.health import router as health_router
 from backend.routes.predict import router as predict_router
+from backend.routes.patients import router as patients_router
+from backend.routes.scans import router as scans_router
 
 
 @asynccontextmanager
@@ -76,6 +84,8 @@ app.add_middleware(
 # Register API Routers
 app.include_router(health_router)
 app.include_router(predict_router)
+app.include_router(patients_router)
+app.include_router(scans_router)
 
 
 @app.get("/", tags=["Root"])

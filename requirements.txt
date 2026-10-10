@@ -16,6 +16,10 @@ fastapi>=0.100.0
 uvicorn>=0.22.0
 python-multipart>=0.0.6
 pydantic>=2.0.0
+pyjwt[crypto]>=2.8.0
+
+# Database & Cloud Services
+supabase>=2.0.0
 
 # Code Quality & Utilities
 tqdm>=4.65.0

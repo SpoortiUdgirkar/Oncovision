@@ -58,6 +58,9 @@ frontend/build/
 frontend/dist/
 .vite/
 
+# Temporary scratch directory
+scratch/
+
 # IDEs & OS generated files
 .vscode/
 .idea/
