@@ -13,11 +13,21 @@ Usage:
 import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
+import torch
 
 # Ensure project root directory is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Configure PyTorch CPU thread pool once at startup before parallel work begins.
+# On resource-constrained environments (e.g. Render free tier with 0.1 CPU allocation),
+# default multi-threading causes severe OpenMP thread contention and context-switching overhead.
+torch.set_num_threads(1)
+try:
+    torch.set_num_interop_threads(1)
+except RuntimeError:
+    pass
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,7 +43,10 @@ async def lifespan(app: FastAPI):
     FastAPI lifespan manager: Loads trained model into memory at server startup
     to prevent reloading or retraining on individual API requests.
     """
-    print("[SERVER STARTUP] Initializing OncoVision Backend Services...")
+    print(
+        f"[SERVER STARTUP] Initializing OncoVision Backend Services... "
+        f"(PyTorch intra-op threads: {torch.get_num_threads()}, inter-op threads: {torch.get_num_interop_threads()})"
+    )
     try:
         model_service.load_model()
     except Exception as e:
