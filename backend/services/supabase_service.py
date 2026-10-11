@@ -52,20 +52,25 @@ class SupabaseService:
 
     def _init_credentials(self):
         """Reads Supabase URL and secret key from environment variables safely."""
-        self.supabase_url = (
+        new_url = (
             os.environ.get("SUPABASE_URL", "").strip()
             or os.environ.get("VITE_SUPABASE_URL", "").strip()
             or None
         )
         
         # Check SUPABASE_SECRET_KEY, with fallbacks for SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY
-        secret_key = (
+        new_secret_key = (
             os.environ.get("SUPABASE_SECRET_KEY", "").strip()
             or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
             or os.environ.get("SUPABASE_KEY", "").strip()
+            or None
         )
-        self._secret_key = secret_key if secret_key else None
-        self._client = None
+
+        # Invalidate the cached client only when the Supabase URL or secret key changes
+        if new_url != self.supabase_url or new_secret_key != self._secret_key:
+            self.supabase_url = new_url
+            self._secret_key = new_secret_key
+            self._client = None
 
     def is_configured(self) -> bool:
         """Checks if Supabase credentials are configured in environment variables."""

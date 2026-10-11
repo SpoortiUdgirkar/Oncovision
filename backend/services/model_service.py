@@ -74,6 +74,11 @@ class ModelService:
         model.to(self.device)
         model.eval()
 
+        # Freeze all model parameters to prevent PyTorch autograd from allocating and storing
+        # intermediate layer activation tensors for parameter gradients during Grad-CAM backward passes.
+        for param in model.parameters():
+            param.requires_grad = False
+
         self.model = model
         self.model_path = model_path
         self.model_name = arch_display
