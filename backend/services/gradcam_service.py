@@ -11,12 +11,7 @@ import base64
 from pathlib import Path
 import numpy as np
 import cv2
-
-import matplotlib
-matplotlib.use("Agg")  # Non-GUI headless backend for server thread safety
-import matplotlib.pyplot as plt
 from PIL import Image
-
 
 # Ensure project root directory is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -29,7 +24,7 @@ from src.gradcam.explain import GradCAM, MEDICAL_DISCLAIMER_TEXT
 def generate_gradcam_base64(model, orig_pil: Image.Image, img_tensor, target_class=None, alpha=0.4):
     """
     Computes Grad-CAM overlay targeting target_class (e.g. from TTA prediction)
-    and encodes side-by-side visualization into Base64 PNG string.
+    and encodes side-by-side visualization into Base64 PNG string using lightweight OpenCV composition.
 
     Grad-CAM operates on the original un-flipped image forward pass using the target class index
     selected by TTA probability averaging.
@@ -44,6 +39,9 @@ def generate_gradcam_base64(model, orig_pil: Image.Image, img_tensor, target_cla
     Returns:
         tuple: (base64_png_uri, pred_class_idx, confidence, probabilities_list)
     """
+    # Convert PIL Image to RGB NumPy array
+    if orig_pil.mode != "RGB":
+        orig_pil = orig_pil.convert("RGB")
     orig_np = np.array(orig_pil)
     orig_h, orig_w = orig_np.shape[:2]
 
@@ -62,36 +60,75 @@ def generate_gradcam_base64(model, orig_pil: Image.Image, img_tensor, target_cla
     # Alpha Blended Overlay
     overlay_rgb = cv2.addWeighted(orig_np, 1.0 - alpha, heatmap_rgb, alpha, 0)
 
-    # Plot Side-by-Side Figure
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-    buf = io.BytesIO()
-    try:
-        fig.suptitle(
-            "OncoVision AI Model Explainability Map",
-            fontsize=13,
-            fontweight="bold",
-            color="darkblue"
-        )
+    # Scale visualization height for side-by-side canvas while preserving aspect ratio
+    target_h = min(orig_h, 480)
+    target_w = max(1, int(orig_w * (target_h / float(orig_h))))
 
-        axes[0].imshow(orig_np)
-        axes[0].set_title("Original Ultrasound Scan", fontsize=10)
-        axes[0].axis("off")
+    if orig_h != target_h or orig_w != target_w:
+        interp = cv2.INTER_AREA if orig_h > target_h else cv2.INTER_LINEAR
+        orig_disp = cv2.resize(orig_np, (target_w, target_h), interpolation=interp)
+        overlay_disp = cv2.resize(overlay_rgb, (target_w, target_h), interpolation=interp)
+    else:
+        orig_disp = orig_np
+        overlay_disp = overlay_rgb
 
-        axes[1].imshow(overlay_rgb)
-        axes[1].set_title(f"Grad-CAM Attention Overlay", fontsize=10)
-        axes[1].axis("off")
+    header_h = 44
+    label_h = 28
+    gap = 8
+    total_w = target_w * 2 + gap
+    total_h = header_h + label_h + target_h + 10
 
-        plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    # Build clean canvas with header and side-by-side panels
+    canvas = np.full((total_h, total_w, 3), 255, dtype=np.uint8)
 
-        # Save to Bytes Buffer
-        plt.savefig(buf, format="png", dpi=130)
-        buf.seek(0)
+    # Top header bar (#f8fafc) and subtle border line (#e2e8f0)
+    canvas[0:header_h, :] = [248, 250, 252]
+    canvas[header_h - 1:header_h, :] = [226, 232, 240]
 
-        # Encode to Base64 String
-        base64_encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
-        base64_data_uri = f"data:image/png;base64,{base64_encoded}"
+    # Main title
+    cv2.putText(
+        canvas,
+        "OncoVision AI Model Explainability Map",
+        (16, 29),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (15, 23, 42),
+        2,
+        cv2.LINE_AA
+    )
 
-        return base64_data_uri, pred_idx, confidence, probs
-    finally:
-        plt.close(fig)
-        buf.close()
+    # Panel subtitles
+    cv2.putText(
+        canvas,
+        "Original Ultrasound Scan",
+        (8, header_h + 19),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.50,
+        (71, 85, 105),
+        1,
+        cv2.LINE_AA
+    )
+    cv2.putText(
+        canvas,
+        "Grad-CAM Attention Overlay",
+        (target_w + gap + 8, header_h + 19),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.50,
+        (71, 85, 105),
+        1,
+        cv2.LINE_AA
+    )
+
+    # Place image panels
+    canvas[header_h + label_h : header_h + label_h + target_h, 0 : target_w] = orig_disp
+    canvas[header_h + label_h : header_h + label_h + target_h, target_w + gap : target_w + gap + target_w] = overlay_disp
+
+    # Fast PNG encoding via OpenCV
+    success, encoded_buf = cv2.imencode(".png", cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))
+    if not success:
+        raise RuntimeError("Failed to encode Grad-CAM visualization to PNG.")
+
+    base64_encoded = base64.b64encode(encoded_buf.tobytes()).decode("utf-8")
+    base64_data_uri = f"data:image/png;base64,{base64_encoded}"
+
+    return base64_data_uri, pred_idx, confidence, probs

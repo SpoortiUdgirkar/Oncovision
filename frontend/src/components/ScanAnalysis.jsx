@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import PatientHistoryModal from './PatientHistoryModal';
 import { 
@@ -25,11 +25,35 @@ export default function ScanAnalysis({ patient, onReturnToPortal }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [analysisStage, setAnalysisStage] = useState('Initializing scan analysis...');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
+
+  useEffect(() => {
+    let timer;
+    if (isLoading) {
+      setElapsedSeconds(0);
+      setAnalysisStage('Uploading scan and preparing deep learning model...');
+      timer = setInterval(() => {
+        setElapsedSeconds((prev) => {
+          const next = prev + 1;
+          if (next >= 10) {
+            setAnalysisStage('Uploading scan artifacts & saving medical record to database...');
+          } else if (next >= 3) {
+            setAnalysisStage('Executing EfficientNet-B0 inference & computing Grad-CAM explainability...');
+          }
+          return next;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isLoading]);
 
   const handleDownloadPdf = async (scanId, patientCode) => {
     setIsDownloadingPdf(true);
@@ -142,26 +166,54 @@ export default function ScanAnalysis({ patient, onReturnToPortal }) {
         headers['Authorization'] = `Bearer ${accessToken}`;
       }
 
-      const response = await fetch(`${API_BASE_URL}/predict`, {
-        method: 'POST',
-        headers: headers,
-        body: formData
-      });
+      let response;
+      try {
+        response = await fetch(`${API_BASE_URL}/predict`, {
+          method: 'POST',
+          headers: headers,
+          body: formData
+        });
+      } catch (networkErr) {
+        console.error('Scan analysis network connection error:', networkErr);
+        throw new Error(
+          'Network connection error: Unable to connect to the OncoVision backend server. ' +
+          'The server may be waking up from an idle state or experiencing network latency. Please check your connection and try submitting the scan again.'
+        );
+      }
 
-      const data = await response.json();
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (_) {
+        data = null;
+      }
 
       if (response.status === 401) {
-        throw new Error(data.detail || 'Authentication token expired or invalid. Please log in again.');
+        throw new Error(
+          (data && data.detail) ||
+          'Your session has expired or the authorization token is invalid. Please log in again.'
+        );
+      }
+
+      if (response.status === 502 || response.status === 504) {
+        throw new Error(
+          `The backend service timed out or was temporarily unavailable (HTTP ${response.status}). The server may still be waking up. Please wait a moment and try again.`
+        );
       }
 
       if (!response.ok) {
-        throw new Error(data.detail || 'Prediction request failed.');
+        const errorDetail = (data && data.detail) || `Prediction request failed with status code ${response.status}.`;
+        throw new Error(errorDetail);
+      }
+
+      if (!data || !data.prediction) {
+        throw new Error('Received an invalid or incomplete response from the prediction service.');
       }
 
       setResult(data);
     } catch (err) {
       console.error('Prediction API Error:', err);
-      setError(err.message || 'Failed to connect to OncoVision backend server.');
+      setError(err.message || 'Failed to process ultrasound scan.');
     } finally {
       setIsLoading(false);
     }
@@ -230,9 +282,29 @@ export default function ScanAnalysis({ patient, onReturnToPortal }) {
 
       {/* Error Alert */}
       {error && (
-        <div className="error-alert" style={{ marginBottom: '1.2rem' }}>
-          <AlertCircle size={18} style={{ verticalAlign: 'middle', marginRight: '8px' }} />
-          {error}
+        <div className="error-alert" style={{ marginBottom: '1.2rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+            <AlertCircle size={20} style={{ flexShrink: 0, marginTop: '2px', color: '#f87171' }} />
+            <div>
+              <div style={{ fontWeight: '700', marginBottom: '2px' }}>Scan Analysis Error</div>
+              <div style={{ fontSize: '0.88rem', lineHeight: '1.4' }}>{error}</div>
+            </div>
+          </div>
+          <button
+            onClick={() => setError(null)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#f87171',
+              cursor: 'pointer',
+              fontSize: '0.82rem',
+              fontWeight: '600',
+              padding: '2px 6px',
+              textDecoration: 'underline'
+            }}
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -280,12 +352,31 @@ export default function ScanAnalysis({ patient, onReturnToPortal }) {
 
       {/* State 3: Loading Indicator */}
       {isLoading && (
-        <div className="loading-box">
-          <div className="spinner"></div>
-          <h3>Analyzing Ultrasound Image &amp; Persisting Scan...</h3>
-          <p style={{ color: 'var(--text-secondary)', marginTop: '6px' }}>
-            Executing EfficientNet-B0 inference, calculating Grad-CAM heatmap, and saving scan record
+        <div className="loading-box" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
+          <div className="spinner" style={{ margin: '0 auto 1.2rem auto' }}></div>
+          <h3 style={{ fontSize: '1.2rem', marginBottom: '8px' }}>Analyzing Ultrasound Image &amp; Persisting Scan...</h3>
+          <p style={{ color: '#38bdf8', fontWeight: '600', fontSize: '0.95rem', marginBottom: '6px' }}>
+            {analysisStage}
           </p>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+            <span>Time elapsed: <strong>{elapsedSeconds}s</strong></span>
+          </div>
+          {elapsedSeconds >= 12 && (
+            <div style={{
+              marginTop: '1.2rem',
+              background: 'rgba(2, 132, 199, 0.1)',
+              border: '1px solid rgba(56, 189, 248, 0.25)',
+              borderRadius: '8px',
+              padding: '10px 14px',
+              fontSize: '0.82rem',
+              color: '#94a3b8',
+              maxWidth: '520px',
+              margin: '1.2rem auto 0 auto'
+            }}>
+              <Info size={14} style={{ verticalAlign: 'middle', marginRight: '6px', color: '#38bdf8' }} />
+              Notice: If the backend service is waking up from idle, the cold start may take up to 45–60 seconds. Please keep this page open.
+            </div>
+          )}
         </div>
       )}
 

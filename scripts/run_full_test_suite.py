@@ -687,6 +687,144 @@ def run_all_tests():
     except Exception as e:
         record_test(27, "Production API URL Configuration & Component Validation", "Frontend API configuration verified", f"Error: {str(e)}", False)
 
+    # ----------------------------------------------------
+    # Test 28: Fast OpenCV Grad-CAM Composition & Latency Benchmark
+    # ----------------------------------------------------
+    try:
+        from backend.services.gradcam_service import generate_gradcam_base64
+        import base64 as b64_mod
+        sample_img_path = list((TEST_DIR).rglob("*.png"))[0]
+        sample_pil = Image.open(sample_img_path).convert("RGB")
+        val_transform = get_val_test_transforms()
+        sample_tensor = val_transform(sample_pil).unsqueeze(0).to(DEVICE)
+
+        start_t = time.time()
+        b64_uri, pred_idx, conf, probs = generate_gradcam_base64(
+            model=model,
+            orig_pil=sample_pil,
+            img_tensor=sample_tensor,
+            target_class=1
+        )
+        elapsed_ms = (time.time() - start_t) * 1000.0
+
+        is_data_uri = b64_uri.startswith("data:image/png;base64,")
+        raw_b64 = b64_uri.split(",")[-1]
+        decoded_bytes = b64_mod.b64decode(raw_b64)
+        decoded_img = Image.open(io.BytesIO(decoded_bytes))
+        w, h = decoded_img.size
+
+        # Verify side-by-side dimensions (w > h) and fast composition (< 500ms)
+        is_side_by_side = (w > h) and (w >= 400)
+        is_fast = elapsed_ms < 500.0
+
+        test_28_passed = is_data_uri and is_side_by_side and is_fast and (len(probs) == 3)
+        record_test(
+            28, "Fast OpenCV Grad-CAM Composition & Latency",
+            "generate_gradcam_base64 executes under 500ms producing valid side-by-side Base64 PNG canvas",
+            f"Latency: {elapsed_ms:.1f}ms, Canvas Size: {w}x{h}, Data URI Valid: {is_data_uri}",
+            test_28_passed
+        )
+    except Exception as e:
+        record_test(28, "Fast OpenCV Grad-CAM Composition & Latency", "Grad-CAM fast composition succeeds", f"Error: {str(e)}", False)
+
+    # ----------------------------------------------------
+    # Test 29: Concurrent Storage Upload & Partial Upload Failure Rollback
+    # ----------------------------------------------------
+    try:
+        from unittest.mock import patch, MagicMock
+
+        test_patient = {
+            "id": "pt-test-uuid-29",
+            "patient_code": "OV-P-TEST29",
+            "full_name": "Rollback Test Patient"
+        }
+
+        with open(test_img_path, "rb") as f:
+            img_data = f.read()
+
+        # Scenario A: Succeeded concurrent uploads -> scan created
+        with patch("backend.routes.predict.supabase_service.is_configured", return_value=True), \
+             patch("backend.routes.predict.supabase_service.get_patient_by_id", return_value=test_patient), \
+             patch("backend.routes.predict.supabase_service.upload_storage_file") as mock_upload, \
+             patch("backend.routes.predict.supabase_service.create_scan_record") as mock_create_scan:
+
+            mock_upload.side_effect = lambda bucket, path, b, ct: path
+            mock_create_scan.return_value = {"id": "scan-29-ok", "patient_id": test_patient["id"]}
+
+            with TestClient(app) as client:
+                res_ok = client.post(
+                    "/predict",
+                    data={"patient_id": "pt-test-uuid-29"},
+                    files={"file": (test_img_path.name, io.BytesIO(img_data), "image/png")},
+                    headers=TEST_AUTH_HEADERS
+                )
+                scan_saved = (res_ok.status_code == 200) and ("saved_scan" in res_ok.json())
+
+        # Scenario B: One upload fails -> clean up partial upload, no DB record, HTTP 500
+        cleaned_up_files = []
+        with patch("backend.routes.predict.supabase_service.is_configured", return_value=True), \
+             patch("backend.routes.predict.supabase_service.get_patient_by_id", return_value=test_patient), \
+             patch("backend.routes.predict.supabase_service.upload_storage_file") as mock_upload_fail, \
+             patch("backend.routes.predict.supabase_service.delete_storage_file") as mock_del, \
+             patch("backend.routes.predict.supabase_service.create_scan_record") as mock_create_scan_fail:
+
+            def upload_side_effect(bucket, path, b, ct):
+                if "_gradcam.png" in path:
+                    raise RuntimeError("Simulated Grad-CAM network storage drop")
+                return path
+
+            mock_upload_fail.side_effect = upload_side_effect
+            mock_del.side_effect = lambda bucket, path: cleaned_up_files.append(path)
+
+            with TestClient(app) as client:
+                res_fail = client.post(
+                    "/predict",
+                    data={"patient_id": "pt-test-uuid-29"},
+                    files={"file": (test_img_path.name, io.BytesIO(img_data), "image/png")},
+                    headers=TEST_AUTH_HEADERS
+                )
+
+                rollback_ok = (
+                    res_fail.status_code == 500 and
+                    mock_create_scan_fail.call_count == 0 and
+                    len(cleaned_up_files) >= 1 and
+                    any("_original.png" in p for p in cleaned_up_files)
+                )
+
+        test_29_passed = scan_saved and rollback_ok
+        record_test(
+            29, "Concurrent Storage Upload & Failure Rollback",
+            "Concurrent uploads succeed; partial upload failure aborts DB insert and deletes partial files",
+            f"Concurrent Save OK: {scan_saved}, Rollback Verified: {rollback_ok}, Cleaned Files: {cleaned_up_files}",
+            test_29_passed
+        )
+    except Exception as e:
+        record_test(29, "Concurrent Storage Upload & Failure Rollback", "Rollback verification succeeds", f"Error: {str(e)}", False)
+
+    # ----------------------------------------------------
+    # Test 30: ScanAnalysis Network Error Handling & Progress Verification
+    # ----------------------------------------------------
+    try:
+        scan_analysis_path = PROJECT_ROOT / "frontend" / "src" / "components" / "ScanAnalysis.jsx"
+        scan_analysis_text = scan_analysis_path.read_text(encoding="utf-8")
+
+        has_timer = "elapsedSeconds" in scan_analysis_text and "setInterval" in scan_analysis_text
+        has_stages = "analysisStage" in scan_analysis_text
+        has_cold_start_notice = "cold start" in scan_analysis_text.lower()
+        has_network_catch = "network connection error" in scan_analysis_text.lower()
+        has_gateway_handling = "502" in scan_analysis_text and "504" in scan_analysis_text
+        no_auto_retry = "handleAnalyze()" not in scan_analysis_text.replace("onClick={handleAnalyze}", "")
+
+        test_30_passed = has_timer and has_stages and has_cold_start_notice and has_network_catch and has_gateway_handling and no_auto_retry
+        record_test(
+            30, "ScanAnalysis Network Error & Progress Verification",
+            "Progress stages with elapsed timer, cold start advice, friendly 502/504/network errors, and no auto-retry loop",
+            f"Timer: {has_timer}, Stages: {has_stages}, Cold Start Tip: {has_cold_start_notice}, Friendly Errors: {has_network_catch}, Safe No-Auto-Retry: {no_auto_retry}",
+            test_30_passed
+        )
+    except Exception as e:
+        record_test(30, "ScanAnalysis Network Error & Progress Verification", "Component verification succeeds", f"Error: {str(e)}", False)
+
     # Summary
     passed_count = sum(1 for t in test_results if t["passed"])
     total_count = len(test_results)

@@ -9,6 +9,7 @@ generates Grad-CAM explainability heatmap, and optionally persists scan images a
 import io
 import base64
 import uuid
+import asyncio
 from typing import Optional
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Form
 from backend.services.preprocessing_service import validate_image_file, load_and_preprocess_image
@@ -92,13 +93,41 @@ async def predict_ultrasound_scan(
 
             uploaded_paths = []
             try:
-                # Step A: Upload original ultrasound image
-                supabase_service.upload_storage_file("oncovision-scans", orig_path, orig_bytes, "image/png")
-                uploaded_paths.append(orig_path)
+                # Concurrently upload original and Grad-CAM images to Supabase Storage
+                upload_orig_task = asyncio.to_thread(
+                    supabase_service.upload_storage_file,
+                    "oncovision-scans",
+                    orig_path,
+                    orig_bytes,
+                    "image/png"
+                )
+                upload_gradcam_task = asyncio.to_thread(
+                    supabase_service.upload_storage_file,
+                    "oncovision-scans",
+                    gradcam_path,
+                    gradcam_bytes,
+                    "image/png"
+                )
 
-                # Step B: Upload Grad-CAM overlay image
-                supabase_service.upload_storage_file("oncovision-scans", gradcam_path, gradcam_bytes, "image/png")
-                uploaded_paths.append(gradcam_path)
+                upload_results = await asyncio.gather(
+                    upload_orig_task,
+                    upload_gradcam_task,
+                    return_exceptions=True
+                )
+
+                orig_res, gradcam_res = upload_results
+
+                # Track successful uploads for atomic cleanup on partial failure
+                if not isinstance(orig_res, Exception):
+                    uploaded_paths.append(orig_path)
+                if not isinstance(gradcam_res, Exception):
+                    uploaded_paths.append(gradcam_path)
+
+                # Check if either upload failed
+                if isinstance(orig_res, Exception):
+                    raise RuntimeError(f"Original image upload failed: {orig_res}")
+                if isinstance(gradcam_res, Exception):
+                    raise RuntimeError(f"Grad-CAM image upload failed: {gradcam_res}")
 
                 # Step C: Prepare database record payload
                 scan_payload = {
@@ -120,7 +149,10 @@ async def predict_ultrasound_scan(
                 # Atomic Cleanup on partial failure
                 print(f"[ERROR] Failed during scan storage/DB record creation: {str(storage_db_err)}. Cleaning up uploaded files...")
                 for path in uploaded_paths:
-                    supabase_service.delete_storage_file("oncovision-scans", path)
+                    try:
+                        supabase_service.delete_storage_file("oncovision-scans", path)
+                    except Exception as cleanup_err:
+                        print(f"[WARNING] Failed to clean up storage file '{path}': {str(cleanup_err)}")
                 raise HTTPException(
                     status_code=500,
                     detail=f"Failed to persist scan record or storage images: {str(storage_db_err)}"
