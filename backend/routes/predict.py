@@ -7,6 +7,7 @@ generates Grad-CAM explainability heatmap, and optionally persists scan images a
 """
 
 import io
+import gc
 import base64
 import uuid
 import asyncio
@@ -75,6 +76,11 @@ async def predict_ultrasound_scan(
             target_class=pred_idx
         )
 
+        # Release PyTorch tensor and raw upload bytes immediately to free memory
+        del img_tensor
+        del file_bytes
+        gc.collect()
+
         saved_scan = None
         # Save scan images and DB record if patient is selected and Supabase is configured
         if patient_record and supabase_service.is_configured():
@@ -82,52 +88,44 @@ async def predict_ultrasound_scan(
             patient_uuid = patient_record["id"]
 
             orig_path = f"scans/{patient_uuid}/{scan_uuid}_original.png"
-            gradcam_path = f"scans/{patient_uuid}/{scan_uuid}_gradcam.png"
+            gradcam_ext = "jpg" if "image/jpeg" in base64_gradcam else "png"
+            gradcam_path = f"scans/{patient_uuid}/{scan_uuid}_gradcam.{gradcam_ext}"
 
-            # Prepare image byte buffers
+            # Prepare original image byte buffer
             orig_buffer = io.BytesIO()
             pil_img.save(orig_buffer, format="PNG")
             orig_bytes = orig_buffer.getvalue()
-
-            gradcam_bytes = base64.b64decode(base64_gradcam.split(",")[-1])
+            orig_buffer.close()
+            del orig_buffer
+            del pil_img
 
             uploaded_paths = []
             try:
-                # Concurrently upload original and Grad-CAM images to Supabase Storage
-                upload_orig_task = asyncio.to_thread(
+                # Step A: Sequential upload of original image to avoid concurrent thread and buffer spikes
+                await asyncio.to_thread(
                     supabase_service.upload_storage_file,
                     "oncovision-scans",
                     orig_path,
                     orig_bytes,
                     "image/png"
                 )
-                upload_gradcam_task = asyncio.to_thread(
+                uploaded_paths.append(orig_path)
+                del orig_bytes
+                gc.collect()
+
+                # Step B: Decode Grad-CAM bytes and upload sequentially
+                gradcam_bytes = base64.b64decode(base64_gradcam.split(",")[-1])
+                gradcam_content_type = "image/jpeg" if gradcam_ext == "jpg" else "image/png"
+                await asyncio.to_thread(
                     supabase_service.upload_storage_file,
                     "oncovision-scans",
                     gradcam_path,
                     gradcam_bytes,
-                    "image/png"
+                    gradcam_content_type
                 )
-
-                upload_results = await asyncio.gather(
-                    upload_orig_task,
-                    upload_gradcam_task,
-                    return_exceptions=True
-                )
-
-                orig_res, gradcam_res = upload_results
-
-                # Track successful uploads for atomic cleanup on partial failure
-                if not isinstance(orig_res, Exception):
-                    uploaded_paths.append(orig_path)
-                if not isinstance(gradcam_res, Exception):
-                    uploaded_paths.append(gradcam_path)
-
-                # Check if either upload failed
-                if isinstance(orig_res, Exception):
-                    raise RuntimeError(f"Original image upload failed: {orig_res}")
-                if isinstance(gradcam_res, Exception):
-                    raise RuntimeError(f"Grad-CAM image upload failed: {gradcam_res}")
+                uploaded_paths.append(gradcam_path)
+                del gradcam_bytes
+                gc.collect()
 
                 # Step C: Prepare database record payload
                 scan_payload = {
@@ -157,6 +155,10 @@ async def predict_ultrasound_scan(
                     status_code=500,
                     detail=f"Failed to persist scan record or storage images: {str(storage_db_err)}"
                 )
+        else:
+            if "pil_img" in locals():
+                del pil_img
+            gc.collect()
 
         response_data = {
             "prediction": pred_class,

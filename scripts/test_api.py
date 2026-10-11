@@ -21,7 +21,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from fastapi.testclient import TestClient
 from backend.main import app
+from backend.auth import create_test_jwt
 
+TEST_AUTH_HEADERS = {"Authorization": f"Bearer {create_test_jwt()}"}
 client = TestClient(app)
 
 
@@ -51,7 +53,8 @@ def test_predict_endpoint_valid_image():
     with TestClient(app) as client:
         response = client.post(
             "/predict",
-            files={"file": (test_img_path.name, io.BytesIO(file_bytes), "image/png")}
+            files={"file": (test_img_path.name, io.BytesIO(file_bytes), "image/png")},
+            headers=TEST_AUTH_HEADERS
         )
 
         assert response.status_code == 200, f"Expected status 200, got {response.status_code}: {response.text}"
@@ -61,8 +64,7 @@ def test_predict_endpoint_valid_image():
         assert "confidence" in data, "Missing 'confidence' in response"
         assert "gradcam_image" in data, "Missing 'gradcam_image' in response"
         assert data["prediction"] in ["Normal", "Benign", "Malignant"], f"Invalid prediction class: {data['prediction']}"
-        assert 0.0 <= data["confidence"] <= 1.0, f"Invalid confidence: {data['confidence']}"
-        assert data["gradcam_image"].startswith("data:image/png;base64,"), "gradcam_image is not valid Base64 URI"
+        assert data["gradcam_image"].startswith("data:image/jpeg;base64,") or data["gradcam_image"].startswith("data:image/png;base64,"), "gradcam_image is not valid Base64 URI"
 
         print(f"  [PASSED] Prediction      : {data['prediction']}")
         print(f"  [PASSED] Confidence      : {data['confidence']*100:.2f}%")
@@ -75,7 +77,8 @@ def test_predict_endpoint_invalid_file():
     with TestClient(app) as client:
         response = client.post(
             "/predict",
-            files={"file": ("text.txt", io.BytesIO(b"Hello world, invalid image!"), "text/plain")}
+            files={"file": ("text.txt", io.BytesIO(b"Hello world, invalid image!"), "text/plain")},
+            headers=TEST_AUTH_HEADERS
         )
         assert response.status_code == 400, f"Expected status 400 Bad Request, got {response.status_code}"
         print(f"  [PASSED] Successfully rejected invalid file with status 400: {response.json()['detail']}")

@@ -210,7 +210,7 @@ def run_all_tests():
             res = client.post("/predict", files={"file": (test_img_path.name, io.BytesIO(img_bytes), "image/png")}, headers=TEST_AUTH_HEADERS)
             data = res.json()
             has_pred = data.get("prediction") in ["Normal", "Benign", "Malignant"]
-            has_b64 = str(data.get("gradcam_image")).startswith("data:image/png;base64,")
+            has_b64 = str(data.get("gradcam_image")).startswith("data:image/jpeg;base64,") or str(data.get("gradcam_image")).startswith("data:image/png;base64,")
             has_model_name = "model_name" in data and "EfficientNet" in data.get("model_name", "")
             passed = (res.status_code == 200) and has_pred and has_b64 and has_model_name
             record_test(
@@ -707,7 +707,7 @@ def run_all_tests():
         )
         elapsed_ms = (time.time() - start_t) * 1000.0
 
-        is_data_uri = b64_uri.startswith("data:image/png;base64,")
+        is_data_uri = b64_uri.startswith("data:image/jpeg;base64,") or b64_uri.startswith("data:image/png;base64,")
         raw_b64 = b64_uri.split(",")[-1]
         decoded_bytes = b64_mod.b64decode(raw_b64)
         decoded_img = Image.open(io.BytesIO(decoded_bytes))
@@ -720,7 +720,7 @@ def run_all_tests():
         test_28_passed = is_data_uri and is_side_by_side and is_fast and (len(probs) == 3)
         record_test(
             28, "Fast OpenCV Grad-CAM Composition & Latency",
-            "generate_gradcam_base64 executes under 500ms producing valid side-by-side Base64 PNG canvas",
+            "generate_gradcam_base64 executes under 500ms producing valid side-by-side Base64 canvas",
             f"Latency: {elapsed_ms:.1f}ms, Canvas Size: {w}x{h}, Data URI Valid: {is_data_uri}",
             test_28_passed
         )
@@ -769,7 +769,7 @@ def run_all_tests():
              patch("backend.routes.predict.supabase_service.create_scan_record") as mock_create_scan_fail:
 
             def upload_side_effect(bucket, path, b, ct):
-                if "_gradcam.png" in path:
+                if "_gradcam" in path:
                     raise RuntimeError("Simulated Grad-CAM network storage drop")
                 return path
 
@@ -793,9 +793,9 @@ def run_all_tests():
 
         test_29_passed = scan_saved and rollback_ok
         record_test(
-            29, "Concurrent Storage Upload & Failure Rollback",
-            "Concurrent uploads succeed; partial upload failure aborts DB insert and deletes partial files",
-            f"Concurrent Save OK: {scan_saved}, Rollback Verified: {rollback_ok}, Cleaned Files: {cleaned_up_files}",
+            29, "Sequential Storage Upload & Failure Rollback",
+            "Sequential uploads succeed without thread contention; partial upload failure aborts DB insert and deletes partial files",
+            f"Sequential Save OK: {scan_saved}, Rollback Verified: {rollback_ok}, Cleaned Files: {cleaned_up_files}",
             test_29_passed
         )
     except Exception as e:
