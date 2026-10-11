@@ -649,6 +649,44 @@ def run_all_tests():
     except Exception as e:
         record_test(26, "Downloadable PDF Diagnostic Report Generation", "PDF report generation succeeds", f"Error: {str(e)}", False)
 
+    # ----------------------------------------------------
+    # Test 27: Production API URL Configuration & Component Validation
+    # ----------------------------------------------------
+    try:
+        api_js_path = PROJECT_ROOT / "frontend" / "src" / "services" / "api.js"
+        has_api_js = api_js_path.exists()
+        api_js_content = api_js_path.read_text(encoding="utf-8") if has_api_js else ""
+        has_render_url = "https://oncovision-api.onrender.com" in api_js_content
+        has_env_priority = "import.meta.env.VITE_API_BASE_URL" in api_js_content
+        has_prod_fallback = ("PROD" in api_js_content) and ("onrender.com" in api_js_content)
+
+        components_dir = PROJECT_ROOT / "frontend" / "src" / "components"
+        api_callers = ["PatientPortal.jsx", "ScanAnalysis.jsx", "PatientHistoryModal.jsx", "PatientSelector.jsx", "PatientRegistration.jsx"]
+        all_callers_clean = True
+        missing_imports = []
+        hardcoded_leaks = []
+
+        for comp_name in api_callers:
+            comp_path = components_dir / comp_name
+            if comp_path.exists():
+                comp_text = comp_path.read_text(encoding="utf-8")
+                if "import { API_BASE_URL } from '../services/api'" not in comp_text:
+                    missing_imports.append(comp_name)
+                    all_callers_clean = False
+                if "http://localhost:8000" in comp_text or "localhost:8000" in comp_text:
+                    hardcoded_leaks.append(comp_name)
+                    all_callers_clean = False
+
+        test_27_passed = has_api_js and has_render_url and has_env_priority and has_prod_fallback and all_callers_clean
+        record_test(
+            27, "Production API URL Configuration & Component Validation",
+            "Shared api.js resolves VITE_API_BASE_URL with Render production fallback; all components import shared API_BASE_URL with 0 hardcoded localhost leaks",
+            f"api.js exists: {has_api_js}, Render URL defined: {has_render_url}, Shared across 5 components: {all_callers_clean}, Leaks: {hardcoded_leaks}",
+            test_27_passed
+        )
+    except Exception as e:
+        record_test(27, "Production API URL Configuration & Component Validation", "Frontend API configuration verified", f"Error: {str(e)}", False)
+
     # Summary
     passed_count = sum(1 for t in test_results if t["passed"])
     total_count = len(test_results)

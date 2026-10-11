@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Search, UserCheck, History, Activity, Calendar, Eye, FileImage, AlertCircle, RefreshCw, X, ChevronRight } from 'lucide-react';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+import { API_BASE_URL } from '../services/api';
 
 export default function PatientSelector({ selectedPatient, onSelectPatient, onNavigateRegister }) {
   const { accessToken } = useAuth();
